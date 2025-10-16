@@ -2,6 +2,6 @@
 
 - Gabriel Chi Vidal
 - Mauricio Sonda Cahuich
-- Alessandro NOvelo Diaz
+- Alessandro Novelo Diaz
 - Angel Antonio Perez Reyes
 - Jose Interian
