@@ -1,51 +1,83 @@
 import RPi.GPIO as GPIO
 import time
 
-BUTTON_PIN = 4
+POT_PIN = 4
 SERVO_PIN = 17
+FREQ_HZ = 50
+MIN_DUTY = 2.5
+MAX_DUTY = 12.5
 
 GPIO.setmode(GPIO.BCM)
-GPIO.setup(BUTTON_PIN, GPIO.IN, pull_up_down=GPIO.PUD_DOWN) 
-GPIO.setup(SERVO_PIN, GPIO.OUT)
+GPIO.setwarnings(False)
 
-servo = GPIO.PWM(SERVO_PIN, 50)
-servo.start(0) # Inicia en 0
+def read_potentiometer():
+    count = 0
+    GPIO.setup(POT_PIN, GPIO.OUT)
+    GPIO.output(POT_PIN, False)
+    time.sleep(0.05)
+    GPIO.setup(POT_PIN, GPIO.IN)
+    while GPIO.input(POT_PIN) == GPIO.LOW:
+        count += 1
+        if count > 50000:
+            break
+    return count
 
-def set_servo_angle(angle):
-    """Mueve el servo al ángulo especificado (0°–180°)."""
-    
-    duty = 2 + (angle / 18)
-    servo.ChangeDutyCycle(duty)
+def calibrate():
+    print("Calibrando para potenciómetro 5K...")
+    print("Gira completamente a la izquierda (mínimo)")
+    time.sleep(3)
+    min_val = read_potentiometer()
+    print("Gira completamente a la derecha (máximo)")
+    time.sleep(3)
+    max_val = read_potentiometer()
+    print(f"Calibración: Mínimo={min_val}, Máximo={max_val}")
+    return min_val, max_val
 
+def angle_to_duty(angle):
+    angle = max(0, min(180, angle))
+    return MIN_DUTY + (MAX_DUTY - MIN_DUTY) * (angle / 180.0)
 
-current_angle = -1 
+def goto_angle(pwm, angle):
+    pwm.ChangeDutyCycle(angle_to_duty(angle))
 
 try:
-    print("Control de servo con botón (0V / 3.3V)")
-    print("→ Botón suelto (LOW) = 0°, Botón presionado (HIGH) = 180°")
-    print("Presiona Ctrl+C para salir")
+    GPIO.setup(SERVO_PIN, GPIO.OUT)
+    pwm = GPIO.PWM(SERVO_PIN, FREQ_HZ)
+    pwm.start(angle_to_duty(0))
+    time.sleep(0.5)
 
+    min_value, max_value = calibrate()
+
+    estado = None
+    print("Leyendo potenciómetro de 5K... (Ctrl+C para detener)")
     while True:
-        if GPIO.input(BUTTON_PIN) == GPIO.HIGH:
-            
-            if current_angle != 180:
-                print("Nivel alto detectado → 180°")
-                set_servo_angle(180)
-                current_angle = 180
+        value = read_potentiometer()
+
+        if max_value - min_value > 0:
+            normalized = (value - min_value) / (max_value - min_value)
+            normalized = max(0.0, min(1.0, normalized))
         else:
-            
-            if current_angle != 0:
-                print("Nivel bajo detectado → 0°")
-                set_servo_angle(0)
-                current_angle = 0
-        
-        
+            normalized = 0.5
+
+        v_est = 3.3 * normalized
+        resistencia_aprox = (value / max_value) * 5000 if max_value else 0
+
+        if v_est >= 3.3 and estado != "HIGH":
+            goto_angle(pwm, 180)
+            estado = "HIGH"
+            print(f"Valor crudo: {value:5d} -> {normalized*100:5.1f}% -> ~{int(resistencia_aprox):4d}Ω -> V≈{v_est:0.2f} -> 1 -> Servo 180°")
+        elif v_est < 0.5 and estado != "LOW":
+            goto_angle(pwm, 0)
+            estado = "LOW"
+            print(f"Valor crudo: {value:5d} -> {normalized*100:5.1f}% -> ~{int(resistencia_aprox):4d}Ω -> V≈{v_est:0.2f} -> 0 -> Servo 0°")
+
         time.sleep(0.05)
 
 except KeyboardInterrupt:
     print("\nDetenido por el usuario")
-
 finally:
-    
-    servo.stop()
+    try:
+        pwm.stop()
+    except:
+        pass
     GPIO.cleanup()
